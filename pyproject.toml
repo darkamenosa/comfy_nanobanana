@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "comfy_nanobanana"
 version = "0.0.1"
-description = "Google Gemini API integration for ComfyUI - Generate images and text using Google's latest AI models"
+description = "Google Gemini image generation integration for ComfyUI"
 authors = [
   {name = "comfy_nanobanana", email = "hxtxmu@gmail.com"}
 ]
@@ -14,7 +14,7 @@ license = {text = "MIT license"}
 requires-python = ">=3.10"
 classifiers = []
 dependencies = [
-    "google-genai>=0.8.0",
+    "google-genai>=1.62.0",
     "Pillow>=10.0.0",
     "torch>=2.0.0",
     "numpy>=1.24.0"

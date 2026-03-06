@@ -1,16 +1,17 @@
 # Comfy Nano Banana
 
-Google Gemini API integration for ComfyUI - Generate images and text using Google's latest AI models, plus a dynamic batch images utility node.
+Google Gemini API integration for ComfyUI focused on Gemini image generation and editing models, plus a dynamic batch images utility node.
 
 ## Features
 
-- 🎨 **Image Generation** - Create images using Gemini's flash-image-preview model
-- 📝 **Text Generation** - Generate text responses with optional image context
-- 🖼️ **Multimodal Support** - Use images as input context for both text and image generation
+- 🎨 **Image Generation** - Create and edit images with Gemini's current Nano Banana image models
+- 📝 **Text Responses** - Capture any text returned alongside generated images
+- 🖼️ **Multimodal Support** - Use images as input context for image generation and editing
 - 🚀 **Concurrent Batch Processing** - Generate 1-4 images concurrently with progress tracking
 - 🔀 **Dynamic Batch Images** - Combine multiple images into a single batch with automatic resizing
 - 🔒 **Secure API Key Handling** - Password field masking with smart export behavior
 - ⚡ **Smart Model Detection** - Automatically uses the right generation method based on model
+- 🆕 **Nano Banana Pro + Nano Banana 2** - Supports the latest Gemini 3 image generation tiers
 
 ## Demo
 
@@ -73,23 +74,24 @@ Located under the "Nano Banana" category, this node interfaces with Google's Gem
 
 #### Inputs
 - **prompt** (required): Text prompt for generation
-- **model**: Gemini model to use (default: `gemini-2.5-flash-image-preview`)
+- **model**: Gemini image model to use (default: `gemini-2.5-flash-image`)
 - **batch_size**: Number of images to generate concurrently (1-4)
 - **seed**: For reproducible outputs (0-2147483647)
 - **system_prompt** (optional): Instructions to guide the model's behavior
 - **images** (optional): Input images for context
 - **api_key** (optional): Override environment variable
-- **top_p** (optional): Nucleus sampling for text generation (0.0-1.0, default: 0.95)
-- **max_tokens** (optional): Maximum tokens for text output (1-8192, default: 2048)
+- **aspect_ratio** (optional): Image output ratio for image models (`auto`, `1:1`, `16:9`, etc.)
+- **image_size** (optional): Output resolution for Gemini 3 image models (`auto`, `512px`, `1K`, `2K`, `4K`)
 
 #### Outputs
-- **images**: Generated images or placeholder for text-only models
+- **images**: Generated or edited image batch
 - **text**: Text response from the model
 
 #### Supported Models
-- `gemini-2.5-flash-image-preview` - Image and text generation
-- `gemini-2.5-pro` - Text generation only
-- `gemini-2.5-flash` - Text generation only
+- `gemini-2.5-flash-image` - Nano Banana / Gemini 2.5 Flash Image
+- `gemini-3-pro-image-preview` - Nano Banana Pro / Gemini 3 Pro Image
+- `gemini-3.1-flash-image-preview` - Nano Banana 2 / Gemini 3.1 Flash Image
+- `gemini-2.5-flash-image-preview` - Legacy image model kept for backward compatibility
 
 ### 2. Batch Images Node
 Located under the "image" category, this utility node dynamically combines multiple images into a single batch.
@@ -178,8 +180,9 @@ This design balances security with developer convenience, ensuring users don't a
 **"Seed must be between 0 and 2147483647"**
 - Gemini API requires 32-bit integer seeds
 
-**Empty image output with text models**
-- Normal behavior - text-only models return placeholder image
+**Unexpected empty image output**
+- Verify you selected one of the supported Gemini image models
+- If the API returns no image payload, the node falls back to a placeholder image to avoid crashing the workflow
 
 ## Contributing
 

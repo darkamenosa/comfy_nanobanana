@@ -2,16 +2,23 @@ import os
 import sys
 import traceback
 import torch
-from typing import Optional, List, Tuple, Dict, Any
-from .gemini_api import GeminiAPIClient
+from typing import Optional, List, Tuple
+from .gemini_api import (
+    ASPECT_RATIO_OPTIONS,
+    DEFAULT_IMAGE_MODEL,
+    GeminiAPIClient,
+    IMAGE_GENERATION_MODELS,
+    IMAGE_SIZE_OPTIONS,
+    is_image_generation_model,
+)
 import comfy.utils
 from comfy.utils import ProgressBar
 
 
 class NanoBananaGeminiImageNode:
     """
-    Generate images and text using Google Gemini API.
-    Creates images based on text prompts with optional image context.
+    Generate images using Gemini image models.
+    Returns image batches plus any text the model includes in its response.
     """
     
     @classmethod
@@ -23,9 +30,9 @@ class NanoBananaGeminiImageNode:
                     "default": "",
                     "tooltip": "Text prompt for image generation"
                 }),
-                "model": (["gemini-2.5-flash-image-preview", "gemini-2.5-pro", "gemini-2.5-flash"], {
-                    "default": "gemini-2.5-flash-image-preview",
-                    "tooltip": "Gemini model for text or image generation"
+                "model": (list(IMAGE_GENERATION_MODELS), {
+                    "default": DEFAULT_IMAGE_MODEL,
+                    "tooltip": "Gemini image model for generation or editing"
                 }),
                 "batch_size": ("INT", {
                     "default": 1,
@@ -58,21 +65,13 @@ class NanoBananaGeminiImageNode:
                     "dynamicPrompts": False,
                     "password": True
                 }),
-                "top_p": ("FLOAT", {
-                    "default": 0.95,
-                    "min": 0.0,
-                    "max": 1.0,
-                    "step": 0.05,
-                    "display": "number",
-                    "tooltip": "Nucleus sampling: higher values (0.95) for more diverse text, lower values (0.1) for more focused. Only affects text generation."
+                "aspect_ratio": (list(ASPECT_RATIO_OPTIONS), {
+                    "default": "auto",
+                    "tooltip": "Image models only. Sets output aspect ratio. 'auto' lets the model decide."
                 }),
-                "max_tokens": ("INT", {
-                    "default": 2048,
-                    "min": 1,
-                    "max": 8192,
-                    "step": 256,
-                    "display": "number",
-                    "tooltip": "Maximum tokens to generate. Only affects text generation."
+                "image_size": (list(IMAGE_SIZE_OPTIONS), {
+                    "default": "auto",
+                    "tooltip": "Gemini 3 image models only. Controls output resolution; ignored for Nano Banana 2.5."
                 })
             }
         }
@@ -81,7 +80,7 @@ class NanoBananaGeminiImageNode:
     RETURN_NAMES = ("images", "text")
     FUNCTION = "generate"
     CATEGORY = "Nano Banana"
-    DESCRIPTION = "Generate images and text using Google Gemini API"
+    DESCRIPTION = "Generate images with Gemini image models"
     
     def generate(
         self,
@@ -92,8 +91,8 @@ class NanoBananaGeminiImageNode:
         system_prompt: str = "",
         images: Optional[torch.Tensor] = None,
         api_key: str = "",
-        top_p: float = 0.95,
-        max_tokens: int = 2048
+        aspect_ratio: str = "auto",
+        image_size: str = "auto",
     ) -> Tuple[torch.Tensor, str]:
         
         # Validate inputs
@@ -102,6 +101,9 @@ class NanoBananaGeminiImageNode:
         
         if seed < 0 or seed > 2147483647:
             raise ValueError(f"Seed must be between 0 and 2147483647 (32-bit integer range), got {seed}")
+
+        if not is_image_generation_model(model):
+            raise ValueError(f"Unsupported model for this node: {model}. Use a Gemini image model.")
         
         # Get API key
         api_key = api_key if api_key else os.environ.get("GEMINI_API_KEY")
@@ -141,8 +143,8 @@ class NanoBananaGeminiImageNode:
                         'system_prompt': system_prompt if system_prompt else None,
                         'images': image_list,
                         'seed': current_seed,
-                        'top_p': top_p,
-                        'max_output_tokens': max_tokens
+                        'aspect_ratio': aspect_ratio,
+                        'image_size': image_size,
                     }
                     batch_configs.append(config)
                 
@@ -162,19 +164,14 @@ class NanoBananaGeminiImageNode:
                 
                 for i, result in enumerate(results):
                     current_seed = seed + i
-                    if "image" in model.lower():
-                        output_images, text_response = result
-                        # For batch, we expect one image per request to maintain batch_size
-                        # If multiple images returned, take the first one
-                        if output_images and len(output_images) > 0:
-                            all_output_images.append(output_images[0])
-                        else:
-                            all_output_images.append(torch.zeros((1, 64, 64, 4)))
-                        all_text_responses.append(f"[Batch {i+1}/{batch_size}, Seed: {current_seed}]\n{text_response}")
+                    output_images, text_response = result
+                    # For batch, we expect one image per request to maintain batch_size
+                    # If multiple images returned, take the first one
+                    if output_images and len(output_images) > 0:
+                        all_output_images.append(output_images[0])
                     else:
-                        text_response = result
-                        all_text_responses.append(f"[Batch {i+1}/{batch_size}, Seed: {current_seed}]\n{text_response}")
                         all_output_images.append(torch.zeros((1, 64, 64, 4)))
+                    all_text_responses.append(f"[Batch {i+1}/{batch_size}, Seed: {current_seed}]\n{text_response}")
             else:
                 # Single generation
                 all_output_images = []
@@ -184,33 +181,18 @@ class NanoBananaGeminiImageNode:
                 
                 # Create progress bar for single generation (indeterminate)
                 pbar = ProgressBar(1)
-                
-                # Check if model supports image generation
-                if "image" in model.lower():
-                    # Use image generation for models that support it
-                    output_images, text_response = client.generate_image(
-                        prompt=prompt,
-                        model=model,
-                        images=image_list,
-                        seed=seed,
-                        system_prompt=system_prompt if system_prompt else None
-                    )
-                    all_output_images.extend(output_images)
-                    all_text_responses.append(text_response)
-                else:
-                    # Use text generation for text-only models
-                    text_response = client.generate_text(
-                        prompt=prompt,
-                        system_prompt=system_prompt if system_prompt else None,
-                        model=model,
-                        images=image_list,
-                        seed=seed,
-                        top_p=top_p,
-                        max_output_tokens=max_tokens
-                    )
-                    all_text_responses.append(text_response)
-                    # Add dummy image for text-only models
-                    all_output_images.append(torch.zeros((1, 64, 64, 4)))
+
+                output_images, text_response = client.generate_image(
+                    prompt=prompt,
+                    model=model,
+                    images=image_list,
+                    seed=seed,
+                    system_prompt=system_prompt if system_prompt else None,
+                    aspect_ratio=aspect_ratio,
+                    image_size=image_size,
+                )
+                all_output_images.extend(output_images)
+                all_text_responses.append(text_response)
                 
                 # Complete the progress bar
                 pbar.update(1)

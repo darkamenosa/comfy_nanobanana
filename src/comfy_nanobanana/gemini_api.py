@@ -15,6 +15,53 @@ DEFAULT_RETRY_DELAY = 1.0
 RETRYABLE_ERRORS = ['rate limit', 'timeout', '429', '503', '500', 'connection']
 CRITICAL_ERRORS = ["API_KEY_INVALID", "API key not valid", "UNAUTHENTICATED"]
 QUOTA_ERRORS = ["RESOURCE_EXHAUSTED", "quota"]
+DEFAULT_TEXT_MODEL = "gemini-2.5-pro"
+DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
+LEGACY_IMAGE_MODEL = "gemini-2.5-flash-image-preview"
+
+IMAGE_GENERATION_MODELS = (
+    DEFAULT_IMAGE_MODEL,
+    "gemini-3-pro-image-preview",
+    "gemini-3.1-flash-image-preview",
+    LEGACY_IMAGE_MODEL,
+)
+TEXT_GENERATION_MODELS = (
+    DEFAULT_TEXT_MODEL,
+    "gemini-2.5-flash",
+)
+SUPPORTED_MODELS = IMAGE_GENERATION_MODELS + TEXT_GENERATION_MODELS
+ASPECT_RATIO_OPTIONS = (
+    "auto",
+    "1:1",
+    "1:4",
+    "1:8",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:1",
+    "4:3",
+    "4:5",
+    "5:4",
+    "8:1",
+    "9:16",
+    "16:9",
+    "21:9",
+)
+IMAGE_SIZE_OPTIONS = ("auto", "512px", "1K", "2K", "4K")
+IMAGE_SIZE_MODELS = {
+    "gemini-3-pro-image-preview",
+    "gemini-3.1-flash-image-preview",
+}
+
+
+def is_image_generation_model(model: str) -> bool:
+    """Return True when the selected model can generate images."""
+    return model in IMAGE_GENERATION_MODELS or "image" in model.lower()
+
+
+def supports_image_size(model: str) -> bool:
+    """Return True when the selected model supports image_size."""
+    return model in IMAGE_SIZE_MODELS
 
 
 class GeminiAPIClient:
@@ -97,44 +144,121 @@ class GeminiAPIClient:
             tensor = tensor.unsqueeze(0)
         
         return tensor
-    
+
+    def _build_contents(
+        self,
+        prompt: str,
+        images: Optional[List[torch.Tensor]] = None
+    ) -> List[Union[str, Image.Image]]:
+        """Build request contents from a prompt and optional image tensors."""
+        contents: List[Union[str, Image.Image]] = [prompt]
+
+        if images:
+            for img_tensor in images:
+                contents.append(self.tensor_to_pil(img_tensor))
+
+        return contents
+
+    def _build_generate_content_config(
+        self,
+        model: str,
+        system_prompt: Optional[str] = None,
+        seed: Optional[int] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        response_modalities: Optional[List[str]] = None,
+        aspect_ratio: str = "auto",
+        image_size: str = "auto"
+    ) -> types.GenerateContentConfig:
+        """Create a GenerateContentConfig with image options when supported."""
+        config_kwargs: Dict[str, Any] = {}
+
+        if system_prompt:
+            config_kwargs["system_instruction"] = system_prompt
+        if seed is not None:
+            config_kwargs["seed"] = seed
+        if top_p is not None:
+            config_kwargs["top_p"] = top_p
+        if max_output_tokens is not None:
+            config_kwargs["max_output_tokens"] = max_output_tokens
+        if response_modalities:
+            config_kwargs["response_modalities"] = response_modalities
+
+        image_config_kwargs: Dict[str, Any] = {}
+        if aspect_ratio != "auto":
+            image_config_kwargs["aspect_ratio"] = aspect_ratio
+        if image_size != "auto":
+            if supports_image_size(model):
+                image_config_kwargs["image_size"] = image_size
+            else:
+                print(f"[NanoBanana Gemini] Ignoring image_size={image_size} for model {model}.")
+
+        if image_config_kwargs:
+            config_kwargs["image_config"] = types.ImageConfig(**image_config_kwargs)
+
+        return types.GenerateContentConfig(**config_kwargs)
+
+    def _extract_response_parts(self, response: Any) -> List[Any]:
+        """Normalize different SDK response shapes into a flat parts list."""
+        if getattr(response, "parts", None):
+            return list(response.parts)
+
+        parts: List[Any] = []
+        for candidate in getattr(response, "candidates", []) or []:
+            content = getattr(candidate, "content", None)
+            if content and getattr(content, "parts", None):
+                parts.extend(content.parts)
+
+        return parts
+
+    def _parse_multimodal_response(self, response: Any) -> tuple[List[torch.Tensor], str]:
+        """Extract images and text from a Gemini response."""
+        output_images: List[torch.Tensor] = []
+        text_output = ""
+
+        for part in self._extract_response_parts(response):
+            if getattr(part, "text", None) is not None:
+                text_output += part.text
+                continue
+
+            inline_data = getattr(part, "inline_data", None)
+            if inline_data is None:
+                continue
+
+            try:
+                if hasattr(inline_data, "data"):
+                    image_bytes = inline_data.data
+                else:
+                    image_bytes = inline_data.get("data", b"")
+
+                if image_bytes:
+                    output_images.append(self.bytes_to_tensor(image_bytes))
+            except Exception as e:
+                print(f"Error processing image from response: {e}")
+                import traceback
+                traceback.print_exc()
+
+        return output_images, text_output
+
     def generate_text(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        model: str = "gemini-2.5-pro",
+        model: str = DEFAULT_TEXT_MODEL,
         images: Optional[List[torch.Tensor]] = None,
         seed: Optional[int] = None,
         top_p: float = 0.95,
         max_output_tokens: int = 8192
     ) -> str:
         """Generate text using Gemini API."""
-        contents = []
-        
-        # Combine system prompt and main prompt
-        full_prompt = ""
-        if system_prompt:
-            full_prompt = f"{system_prompt}\n\n{prompt}"
-        else:
-            full_prompt = prompt
-        
-        # Add text prompt
-        contents.append(full_prompt)
-        
-        # Add images if provided
-        if images:
-            for img_tensor in images:
-                pil_image = self.tensor_to_pil(img_tensor)
-                contents.append(pil_image)
-        
-        # Configure generation
-        config = types.GenerateContentConfig(
+        contents = self._build_contents(prompt=prompt, images=images)
+        config = self._build_generate_content_config(
+            model=model,
+            system_prompt=system_prompt,
+            seed=seed,
             top_p=top_p,
             max_output_tokens=max_output_tokens,
         )
-        
-        if seed is not None:
-            config.seed = seed
         
         # Generate content with retry logic
         response = self._retry_on_failure(
@@ -151,69 +275,31 @@ class GeminiAPIClient:
     def generate_image(
         self,
         prompt: str,
-        model: str = "gemini-2.5-flash-image-preview",
+        model: str = DEFAULT_IMAGE_MODEL,
         images: Optional[List[torch.Tensor]] = None,
         seed: Optional[int] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        aspect_ratio: str = "auto",
+        image_size: str = "auto",
     ) -> tuple[List[torch.Tensor], str]:
-        """Generate images using Gemini API with image generation model."""
-        
-        # For image generation with gemini-2.5-flash-image-preview, use chat interface
-        chat = self.client.chats.create(model=model)
-        
-        # Prepare message contents
-        message_contents = []
-        
-        # Combine system prompt and main prompt
-        full_prompt = ""
-        if system_prompt:
-            full_prompt = f"{system_prompt}\n\n{prompt}"
-        else:
-            full_prompt = prompt
-        
-        message_contents.append(full_prompt)
-        
-        # Add input images if provided
-        if images:
-            for img_tensor in images:
-                pil_image = self.tensor_to_pil(img_tensor)
-                message_contents.append(pil_image)
-        
-        # Send message to generate image with retry logic
-        response = self._retry_on_failure(
-            chat.send_message,
-            message_contents
+        """Generate images using Gemini API image generation models."""
+        contents = self._build_contents(prompt=prompt, images=images)
+        config = self._build_generate_content_config(
+            model=model,
+            system_prompt=system_prompt,
+            seed=seed,
+            response_modalities=["TEXT", "IMAGE"],
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
         )
-        
-        output_images = []
-        text_output = ""
-        
-        # Process response
-        if response.candidates and len(response.candidates) > 0:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                for part in candidate.content.parts:
-                    # Handle text parts
-                    if part.text is not None:
-                        text_output += part.text
-                    # Handle image parts
-                    elif part.inline_data is not None:
-                        try:
-                            # Get image data - inline_data.data is already bytes
-                            if hasattr(part.inline_data, 'data'):
-                                image_bytes = part.inline_data.data
-                            else:
-                                # If it's a dict
-                                image_bytes = part.inline_data.get('data', b'')
-                            
-                            if image_bytes:
-                                # Convert bytes to tensor
-                                tensor = self.bytes_to_tensor(image_bytes)
-                                output_images.append(tensor)
-                        except Exception as e:
-                            print(f"Error processing image from response: {e}")
-                            import traceback
-                            traceback.print_exc()
+
+        response = self._retry_on_failure(
+            self.client.models.generate_content,
+            model=model,
+            contents=contents,
+            config=config,
+        )
+        output_images, text_output = self._parse_multimodal_response(response)
         
         # Return empty tensor if no images generated
         if not output_images:
@@ -226,39 +312,21 @@ class GeminiAPIClient:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        model: str = "gemini-2.5-pro",
+        model: str = DEFAULT_TEXT_MODEL,
         images: Optional[List[torch.Tensor]] = None,
         seed: Optional[int] = None,
         top_p: float = 0.95,
         max_output_tokens: int = 8192
     ) -> str:
         """Generate text using Gemini API with async client."""
-        contents = []
-        
-        # Combine system prompt and main prompt
-        full_prompt = ""
-        if system_prompt:
-            full_prompt = f"{system_prompt}\n\n{prompt}"
-        else:
-            full_prompt = prompt
-        
-        # Add text prompt
-        contents.append(full_prompt)
-        
-        # Add images if provided
-        if images:
-            for img_tensor in images:
-                pil_image = self.tensor_to_pil(img_tensor)
-                contents.append(pil_image)
-        
-        # Configure generation
-        config = types.GenerateContentConfig(
+        contents = self._build_contents(prompt=prompt, images=images)
+        config = self._build_generate_content_config(
+            model=model,
+            system_prompt=system_prompt,
+            seed=seed,
             top_p=top_p,
             max_output_tokens=max_output_tokens,
         )
-        
-        if seed is not None:
-            config.seed = seed
         
         # Generate content with async client
         response = await self.client.aio.models.generate_content(
@@ -273,64 +341,31 @@ class GeminiAPIClient:
     async def generate_image_async(
         self,
         prompt: str,
-        model: str = "gemini-2.5-flash-image-preview",
+        model: str = DEFAULT_IMAGE_MODEL,
         images: Optional[List[torch.Tensor]] = None,
         seed: Optional[int] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        aspect_ratio: str = "auto",
+        image_size: str = "auto",
     ) -> tuple[List[torch.Tensor], str]:
         """Generate images using async Gemini API."""
-        
-        # For image generation, we still need to use chat interface
-        # Note: This might not be fully async, but we wrap it for consistency
-        chat = self.client.aio.chats.create(model=model)
-        
-        # Prepare message contents
-        message_contents = []
-        
-        # Combine system prompt and main prompt
-        full_prompt = ""
-        if system_prompt:
-            full_prompt = f"{system_prompt}\n\n{prompt}"
-        else:
-            full_prompt = prompt
-        
-        message_contents.append(full_prompt)
-        
-        # Add input images if provided
-        if images:
-            for img_tensor in images:
-                pil_image = self.tensor_to_pil(img_tensor)
-                message_contents.append(pil_image)
-        
-        # Send message to generate image
-        response = await chat.send_message(message_contents)
-        
-        output_images = []
-        text_output = ""
-        
-        # Process response
-        if response.candidates and len(response.candidates) > 0:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                for part in candidate.content.parts:
-                    # Handle text parts
-                    if part.text is not None:
-                        text_output += part.text
-                    # Handle image parts
-                    elif part.inline_data is not None:
-                        try:
-                            # Get image data
-                            if hasattr(part.inline_data, 'data'):
-                                image_bytes = part.inline_data.data
-                            else:
-                                image_bytes = part.inline_data.get('data', b'')
-                            
-                            if image_bytes:
-                                # Convert bytes to tensor
-                                tensor = self.bytes_to_tensor(image_bytes)
-                                output_images.append(tensor)
-                        except Exception as e:
-                            print(f"Error processing image from response: {e}")
+        contents = self._build_contents(prompt=prompt, images=images)
+        config = self._build_generate_content_config(
+            model=model,
+            system_prompt=system_prompt,
+            seed=seed,
+            response_modalities=["TEXT", "IMAGE"],
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+        )
+
+        response = await self.client.aio.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+
+        output_images, text_output = self._parse_multimodal_response(response)
         
         # Return empty tensor if no images generated
         if not output_images:
@@ -350,14 +385,16 @@ class GeminiAPIClient:
         async def process_single_request(index: int, config: Dict[str, Any]):
             """Process a single request and handle errors."""
             try:
-                if "image" in model.lower():
+                if is_image_generation_model(model):
                     # Generate image
                     result = await self.generate_image_async(
                         prompt=config.get('prompt'),
                         model=model,
                         images=config.get('images'),
                         seed=config.get('seed'),
-                        system_prompt=config.get('system_prompt')
+                        system_prompt=config.get('system_prompt'),
+                        aspect_ratio=config.get('aspect_ratio', 'auto'),
+                        image_size=config.get('image_size', 'auto'),
                     )
                 else:
                     # Generate text
@@ -397,7 +434,7 @@ class GeminiAPIClient:
                 print(f"[NanoBanana Gemini] Non-critical error, continuing with placeholder for batch {index + 1}")
                 
                 # Return error placeholder
-                if "image" in model.lower():
+                if is_image_generation_model(model):
                     return ([torch.zeros((1, 64, 64, 4))], f"Error in batch {index + 1}: {error_str}")
                 else:
                     return f"Error in batch {index + 1}: {error_str}"
