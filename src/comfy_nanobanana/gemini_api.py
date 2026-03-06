@@ -18,6 +18,15 @@ QUOTA_ERRORS = ["RESOURCE_EXHAUSTED", "quota"]
 DEFAULT_TEXT_MODEL = "gemini-2.5-pro"
 DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 LEGACY_IMAGE_MODEL = "gemini-2.5-flash-image-preview"
+DEFAULT_IMAGE_MODEL_LABEL = "Nano Banana"
+
+MODEL_LABEL_TO_ID = {
+    "Nano Banana": DEFAULT_IMAGE_MODEL,
+    "Nano Banana Pro": "gemini-3-pro-image-preview",
+    "Nano Banana 2": "gemini-3.1-flash-image-preview",
+}
+MODEL_ID_TO_LABEL = {model_id: label for label, model_id in MODEL_LABEL_TO_ID.items()}
+MODEL_ID_TO_LABEL[LEGACY_IMAGE_MODEL] = DEFAULT_IMAGE_MODEL_LABEL
 
 IMAGE_GENERATION_MODELS = (
     DEFAULT_IMAGE_MODEL,
@@ -25,6 +34,7 @@ IMAGE_GENERATION_MODELS = (
     "gemini-3.1-flash-image-preview",
     LEGACY_IMAGE_MODEL,
 )
+IMAGE_MODEL_LABELS = tuple(MODEL_LABEL_TO_ID.keys())
 TEXT_GENERATION_MODELS = (
     DEFAULT_TEXT_MODEL,
     "gemini-2.5-flash",
@@ -56,12 +66,25 @@ IMAGE_SIZE_MODELS = {
 
 def is_image_generation_model(model: str) -> bool:
     """Return True when the selected model can generate images."""
+    model = normalize_model_name(model)
     return model in IMAGE_GENERATION_MODELS or "image" in model.lower()
 
 
 def supports_image_size(model: str) -> bool:
     """Return True when the selected model supports image_size."""
+    model = normalize_model_name(model)
     return model in IMAGE_SIZE_MODELS
+
+
+def normalize_model_name(model: str) -> str:
+    """Resolve a user-facing model label or legacy alias to a Gemini API model ID."""
+    return MODEL_LABEL_TO_ID.get(model, model)
+
+
+def get_model_label(model: str) -> str:
+    """Return the user-facing label for a Gemini API model ID."""
+    normalized_model = normalize_model_name(model)
+    return MODEL_ID_TO_LABEL.get(normalized_model, normalized_model)
 
 
 class GeminiAPIClient:

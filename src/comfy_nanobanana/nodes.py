@@ -5,11 +5,14 @@ import torch
 from typing import Optional, List, Tuple
 from .gemini_api import (
     ASPECT_RATIO_OPTIONS,
-    DEFAULT_IMAGE_MODEL,
+    DEFAULT_IMAGE_MODEL_LABEL,
     GeminiAPIClient,
-    IMAGE_GENERATION_MODELS,
+    IMAGE_MODEL_LABELS,
     IMAGE_SIZE_OPTIONS,
+    MODEL_LABEL_TO_ID,
+    get_model_label,
     is_image_generation_model,
+    normalize_model_name,
 )
 import comfy.utils
 from comfy.utils import ProgressBar
@@ -30,8 +33,8 @@ class NanoBananaGeminiImageNode:
                     "default": "",
                     "tooltip": "Text prompt for image generation"
                 }),
-                "model": (list(IMAGE_GENERATION_MODELS), {
-                    "default": DEFAULT_IMAGE_MODEL,
+                "model": (list(IMAGE_MODEL_LABELS), {
+                    "default": DEFAULT_IMAGE_MODEL_LABEL,
                     "tooltip": "Gemini image model for generation or editing"
                 }),
                 "batch_size": ("INT", {
@@ -81,7 +84,16 @@ class NanoBananaGeminiImageNode:
     FUNCTION = "generate"
     CATEGORY = "Nano Banana"
     DESCRIPTION = "Generate images with Gemini image models"
-    
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, model: str, **kwargs):
+        # Accept both display labels and raw model IDs (for saved workflows)
+        if model in MODEL_LABEL_TO_ID or normalize_model_name(model) != model:
+            return True
+        if is_image_generation_model(model):
+            return True
+        return f"Unknown model: {model}"
+
     def generate(
         self,
         prompt: str,
@@ -101,6 +113,8 @@ class NanoBananaGeminiImageNode:
         
         if seed < 0 or seed > 2147483647:
             raise ValueError(f"Seed must be between 0 and 2147483647 (32-bit integer range), got {seed}")
+
+        model = normalize_model_name(model)
 
         if not is_image_generation_model(model):
             raise ValueError(f"Unsupported model for this node: {model}. Use a Gemini image model.")
@@ -161,6 +175,7 @@ class NanoBananaGeminiImageNode:
                 # Process results
                 all_output_images = []
                 all_text_responses = []
+                model_label = get_model_label(model)
                 
                 for i, result in enumerate(results):
                     current_seed = seed + i
@@ -171,7 +186,7 @@ class NanoBananaGeminiImageNode:
                         all_output_images.append(output_images[0])
                     else:
                         all_output_images.append(torch.zeros((1, 64, 64, 4)))
-                    all_text_responses.append(f"[Batch {i+1}/{batch_size}, Seed: {current_seed}]\n{text_response}")
+                    all_text_responses.append(f"[Batch {i+1}/{batch_size}, {model_label}, Seed: {current_seed}]\n{text_response}")
             else:
                 # Single generation
                 all_output_images = []

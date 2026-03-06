@@ -1,4 +1,4 @@
-import { app } from "../../../scripts/app.js";
+import { app } from "/scripts/app.js";
 
 const GEMINI_NODE_NAME = "NanoBananaGeminiImageNode";
 const API_KEY_WIDGET_NAME = "api_key";

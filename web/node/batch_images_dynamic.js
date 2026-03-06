@@ -1,4 +1,4 @@
-import { app } from "../../../scripts/app.js";
+import { app } from "/scripts/app.js";
 
 const TypeSlot = {
     Input: 1,
@@ -77,26 +77,50 @@ app.registerExtension({
                     try { this.removeInput(slot_idx); } catch (e) {}
                 }
 
-                // Remove all empty IMAGE inputs (from disconnects or node deletions)
+                // Reindex and prune empties
+                // Rename only connected inputs; leave empties as 'image'
+                let slot_tracker = {};
+                for (let i = 0; i < this.inputs.length; i++) {
+                    const slot = this.inputs[i];
+                    if (!slot || slot.type !== _TYPE) continue;
+                    if (slot.link == null) {
+                        slot.name = _PREFIX;
+                        continue;
+                    }
+                    // Normalize base name to plain prefix (strip trailing digits and underscores)
+                    let base = (slot.name || _PREFIX);
+                    base = base.replace(/[0-9]+$/g, "");
+                    base = base.replace(/_$/g, "");
+                    if (!base) base = _PREFIX;
+                    const count = (slot_tracker[base] || 0) + 1;
+                    slot_tracker[base] = count;
+                    // Display without underscore: image1, image2, ...
+                    slot.name = `${base}${count}`;
+                }
+
+                // Ensure exactly one trailing empty IMAGE input
+                let lastConnected = -1;
+                for (let i = 0; i < this.inputs.length; i++) {
+                    const inp = this.inputs[i];
+                    if (inp && inp.type === _TYPE && inp.link != null) lastConnected = i;
+                }
+                // Remove extra empties beyond one after the last connected
+                let emptyAfter = 0;
                 for (let i = this.inputs.length - 1; i >= 0; i--) {
                     const inp = this.inputs[i];
                     if (!inp || inp.type !== _TYPE) continue;
-                    if (inp.link == null) this.removeInput(i);
+                    const isEmpty = inp.link == null;
+                    if (i > lastConnected && isEmpty) {
+                        emptyAfter += 1;
+                        if (emptyAfter > 1) this.removeInput(i);
+                    }
                 }
-
-                // Rename remaining connected IMAGE inputs to image1..imageN
-                let count = 0;
-                for (let i = 0; i < this.inputs.length; i++) {
-                    const inp = this.inputs[i];
-                    if (!inp || inp.type !== _TYPE) continue;
-                    count += 1;
-                    inp.name = `${_PREFIX}${count}`;
+                let last = this.inputs[this.inputs.length - 1];
+                if (last === undefined || last.type !== _TYPE || last.link !== null) {
+                    this.addInput(_PREFIX, _TYPE);
+                    last = this.inputs[this.inputs.length - 1];
+                    if (last) last.color_off = "#666";
                 }
-
-                // Keep a single empty IMAGE input at the end
-                this.addInput(_PREFIX, _TYPE);
-                const last = this.inputs[this.inputs.length - 1];
-                if (last) last.color_off = "#666";
 
                 this?.graph?.setDirtyCanvas(true);
                 return me;
@@ -108,5 +132,3 @@ app.registerExtension({
         return nodeType;
     },
 });
-
-

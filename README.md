@@ -74,7 +74,7 @@ Located under the "Nano Banana" category, this node interfaces with Google's Gem
 
 #### Inputs
 - **prompt** (required): Text prompt for generation
-- **model**: Gemini image model to use (default: `gemini-2.5-flash-image`)
+- **model**: Gemini image model to use (default: `Nano Banana`)
 - **batch_size**: Number of images to generate concurrently (1-4)
 - **seed**: For reproducible outputs (0-2147483647)
 - **system_prompt** (optional): Instructions to guide the model's behavior
@@ -88,10 +88,11 @@ Located under the "Nano Banana" category, this node interfaces with Google's Gem
 - **text**: Text response from the model
 
 #### Supported Models
-- `gemini-2.5-flash-image` - Nano Banana / Gemini 2.5 Flash Image
-- `gemini-3-pro-image-preview` - Nano Banana Pro / Gemini 3 Pro Image
-- `gemini-3.1-flash-image-preview` - Nano Banana 2 / Gemini 3.1 Flash Image
-- `gemini-2.5-flash-image-preview` - Legacy image model kept for backward compatibility
+- `Nano Banana` (`gemini-2.5-flash-image`)
+- `Nano Banana Pro` (`gemini-3-pro-image-preview`)
+- `Nano Banana 2` (`gemini-3.1-flash-image-preview`)
+
+Existing workflows that still store raw Gemini model IDs continue to work. The legacy `gemini-2.5-flash-image-preview` value is also accepted as an alias for `Nano Banana`.
 
 ### 2. Batch Images Node
 Located under the "image" category, this utility node dynamically combines multiple images into a single batch.

@@ -1,4 +1,19 @@
 """Top-level package for comfy_nanobanana."""
+import subprocess
+import sys
+
+def ensure_dependencies():
+    """Check and install required dependencies."""
+    try:
+        from google import genai
+    except ImportError:
+        print("[comfy_nanobanana] google-genai not found, installing...")
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install", "google-genai>=1.0.0"
+        ])
+        print("[comfy_nanobanana] google-genai installed successfully.")
+
+ensure_dependencies()
 
 __all__ = [
     "NODE_CLASS_MAPPINGS",
